@@ -1,0 +1,271 @@
+openapi: 3.0.3
+info:
+  title: SquadYatra User API
+  version: 1.0.0
+  description: Private account profiles and lifecycle. Supabase owns passwords and sessions.
+servers:
+  - url: http://localhost:8080/api
+    description: Gateway
+  - url: http://localhost:8081
+    description: Direct service (restricted outside development)
+security:
+  - supabaseBearer: []
+paths:
+  /users:
+    post:
+      operationId: registerUser
+      summary: Register a new user without a JWT
+      description: Commits a local pending user with phone number, signs up through Supabase Auth, then maps the returned UUID. No password is stored and no access token is returned. Requires a public gateway POST /api/users access rule.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Registration'}
+      responses:
+        '201':
+          description: Local user and Supabase identity created and mapped. Email confirmation may still be required before login.
+          headers:
+            Location: {schema: {type: string}, description: Gateway profile URL}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RegistrationResult'}
+        default: {$ref: '#/components/responses/Problem'}
+    get:
+      operationId: listUsers
+      summary: List minimal user summaries (active database admin only)
+      description: Requires users:read. Contact details are omitted.
+      parameters:
+        - {name: page, in: query, schema: {type: integer, minimum: 0, default: 0}}
+        - {name: size, in: query, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+        - {name: status, in: query, schema: {type: string, enum: [ACTIVE, INACTIVE, SUSPENDED]}}
+        - {name: type, in: query, schema: {type: string, enum: [CONSUMER, AGENCY, ADMIN]}}
+      responses:
+        '200':
+          description: Paginated summaries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: array
+                    items: {$ref: '#/components/schemas/UserSummary'}
+                  page: {type: integer}
+                  size: {type: integer}
+                  totalElements: {type: integer, format: int64}
+                  totalPages: {type: integer}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/me:
+    get:
+      operationId: getOwnProfile
+      summary: Read own active profile
+      description: Requires users:read.
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+    put:
+      operationId: replaceOwnProfile
+      summary: Replace editable profile fields
+      description: Requires users:write. Missing optional fields are cleared. Supply the last returned version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ProfileUpdate'}
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/me/deactivate:
+    post:
+      operationId: deactivateOwnAccount
+      summary: Deactivate own non-admin account
+      description: Requires users:write. Subsequent authenticated operations are rejected locally immediately.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReasonAndVersion'}
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/UserId'}
+    get:
+      operationId: getUser
+      summary: Read a profile as owner or active database admin
+      description: Requires users:read.
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/{id}/status:
+    parameters:
+      - {$ref: '#/components/parameters/UserId'}
+    put:
+      operationId: changeUserStatus
+      summary: Change another user's status (admin only)
+      description: Requires users:write and a current active database admin profile.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/ReasonAndVersion'}
+                - type: object
+                  required: [status]
+                  properties:
+                    status: {$ref: '#/components/schemas/AccountStatus'}
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/{id}/type:
+    parameters:
+      - {$ref: '#/components/parameters/UserId'}
+    put:
+      operationId: changeUserType
+      summary: Change another user's type (admin only)
+      description: Requires users:write. Does not approve agencies or grant listing ownership.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - {$ref: '#/components/schemas/ReasonAndVersion'}
+                - type: object
+                  required: [userType]
+                  properties:
+                    userType: {$ref: '#/components/schemas/UserType'}
+      responses:
+        '200': {$ref: '#/components/responses/User'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/{id}/identity-sync:
+    parameters:
+      - {$ref: '#/components/parameters/UserId'}
+    post:
+      operationId: retryIdentitySync
+      summary: Requeue provider synchronization (admin only)
+      description: Requires users:write. Includes exhausted retries; reads current account state.
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        default: {$ref: '#/components/responses/Problem'}
+  /users/password-reset:
+    post:
+      operationId: requestPasswordRecovery
+      summary: Request recovery email without disclosing account existence
+      description: Requires a specific public gateway access rule. Rate-limited per email and TCP peer. Password completion uses Supabase Auth.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email, maxLength: 320}
+      responses:
+        '202': {$ref: '#/components/responses/Accepted'}
+        default: {$ref: '#/components/responses/Problem'}
+components:
+  securitySchemes:
+    supabaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UserId:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    User:
+      description: Private user profile
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/User'}
+    Accepted:
+      description: Request accepted, not a delivery guarantee
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              message: {type: string}
+    Problem:
+      description: Problem Details error (400, 401, 403, 404, 409, 429, or 503)
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            properties:
+              type: {type: string}
+              title: {type: string}
+              status: {type: integer}
+              detail: {type: string}
+              instance: {type: string}
+              correlationId: {type: string}
+              errors: {type: array, items: {type: string}}
+  schemas:
+    Registration:
+      type: object
+      required: [fullName, email, phoneNumber, password]
+      properties:
+        fullName: {type: string, minLength: 1, maxLength: 100}
+        email: {type: string, format: email, maxLength: 320}
+        phoneNumber: {type: string, pattern: '^\+[1-9][0-9]{6,14}$', description: Unverified contact number; stored locally and in Supabase user metadata}
+        password: {type: string, format: password, minLength: 12, maxLength: 128, writeOnly: true}
+        captchaToken: {type: string, maxLength: 2048, writeOnly: true, description: Provider CAPTCHA token when enabled}
+    RegistrationResult:
+      type: object
+      required: [id, supabaseUserId, message]
+      properties:
+        id: {type: string, format: uuid, description: Stable local user primary key}
+        supabaseUserId: {type: string, format: uuid, description: Returned Supabase Auth identity UUID, used as JWT subject}
+        message: {type: string}
+    RegistrationStatus: {type: string, enum: [pending, completed, failed]}
+    UserType: {type: string, enum: [consumer, agency, admin]}
+    AccountStatus: {type: string, enum: [active, inactive, suspended]}
+    ReasonAndVersion:
+      type: object
+      required: [reason, version]
+      properties:
+        reason: {type: string, minLength: 1, maxLength: 300}
+        version: {type: integer, format: int64, minimum: 0}
+    ProfileUpdate:
+      type: object
+      required: [fullName, timeZone, locale, emailNotifications, marketingConsent, version]
+      properties:
+        fullName: {type: string, minLength: 1, maxLength: 100}
+        phone: {type: string, nullable: true, pattern: '^\+[1-9][0-9]{6,14}$'}
+        dateOfBirth: {type: string, format: date, nullable: true, description: Self-reported; must be in the past}
+        city: {type: string, maxLength: 80, nullable: true}
+        countryCode: {type: string, nullable: true, pattern: '^[A-Z]{2}$'}
+        timeZone: {type: string, maxLength: 64, example: Asia/Kolkata}
+        locale: {type: string, maxLength: 35, example: en-IN}
+        bio: {type: string, maxLength: 500, nullable: true}
+        emailNotifications: {type: boolean, default: true}
+        marketingConsent: {type: boolean, default: false}
+        version: {type: integer, format: int64, minimum: 0}
+    UserSummary:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        fullName: {type: string}
+        userType: {$ref: '#/components/schemas/UserType'}
+        status: {$ref: '#/components/schemas/AccountStatus'}
+    User:
+      allOf:
+        - {$ref: '#/components/schemas/ProfileUpdate'}
+        - {$ref: '#/components/schemas/UserSummary'}
+        - type: object
+          properties:
+            supabaseUserId: {type: string, format: uuid, nullable: true, readOnly: true}
+            registrationStatus: {$ref: '#/components/schemas/RegistrationStatus'}
+            email: {type: string, format: email, readOnly: true}
+            marketingConsentUpdatedAt: {type: string, format: date-time, nullable: true, readOnly: true}
+            createdAt: {type: string, format: date-time, readOnly: true}
+            updatedAt: {type: string, format: date-time, readOnly: true}

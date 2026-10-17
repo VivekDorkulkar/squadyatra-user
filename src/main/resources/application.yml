@@ -1,0 +1,50 @@
+server:
+  port: ${PORT:8081}
+  shutdown: graceful
+  error:
+    include-message: never
+    include-stacktrace: never
+spring:
+  application:
+    name: squadyatra-user
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/squadyatra}
+    username: ${DATABASE_USERNAME:squadyatra_user}
+    password: ${DATABASE_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${DATABASE_POOL_SIZE:5}
+      connection-timeout: 5000
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        default_schema: user_service
+        jdbc:
+          time_zone: UTC
+  flyway:
+    default-schema: user_service
+    schemas: user_service
+  mvc:
+    problemdetails:
+      enabled: true
+supabase:
+  auth:
+    url: ${SUPABASE_URL:}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
+    publishable-key: ${SUPABASE_PUBLISHABLE_KEY:}
+    password-reset-redirect: ${PASSWORD_RESET_REDIRECT:}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+      show-details: never
+      group:
+        readiness:
+          include: readinessState,db
