@@ -13,7 +13,7 @@ jobs:
           java-version: '21'
           cache: maven
       - name: Test and Package
-        run: sh ./mvnw -B clean verify
+        run: mvn -B clean verify
       - uses: actions/upload-artifact@v4
         if: always()
         with:
