@@ -28,7 +28,7 @@ spring:
 supabase:
   auth:
     url: ${SUPABASE_URL:https://sfyvzgfkcfrbipuseisz.supabase.co}
-    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:sb_secret_IB6co0kL2dSwmw8N4g02RA_Qi1B0iRj}
+    service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
     publishable-key: ${SUPABASE_PUBLISHABLE_KEY:sb_publishable_vj_LcujLawRXhMV96IV1Nw_h8FbpibS}
     password-reset-redirect: ${PASSWORD_RESET_REDIRECT:http://localhost:5174/reset-password}
     email-confirmation-redirect: ${EMAIL_CONFIRMATION_REDIRECT:http://localhost:5174/login}
