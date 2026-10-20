@@ -5,12 +5,14 @@ server:
     include-message: never
     include-stacktrace: never
 spring:
+  config:
+    import: optional:file:.env[.properties]
   application:
     name: squadyatra-user
   datasource:
-    url: ${DATABASE_URL:jdbc:mysql://localhost:3306/squadyatra}
-    username: ${DATABASE_USERNAME:root}
-    password: ${DATABASE_PASSWORD:Vivek@1995}
+    url: ${DATABASE_URL}
+    username: ${DATABASE_USERNAME}
+    password: ${DATABASE_PASSWORD}
     hikari:
       maximum-pool-size: ${DATABASE_POOL_SIZE:5}
       connection-timeout: 5000
@@ -27,11 +29,11 @@ spring:
       enabled: true
 supabase:
   auth:
-    url: ${SUPABASE_URL:https://sfyvzgfkcfrbipuseisz.supabase.co}
+    url: ${SUPABASE_URL}
     service-role-key: ${SUPABASE_SERVICE_ROLE_KEY:}
-    publishable-key: ${SUPABASE_PUBLISHABLE_KEY:sb_publishable_vj_LcujLawRXhMV96IV1Nw_h8FbpibS}
-    password-reset-redirect: ${PASSWORD_RESET_REDIRECT:http://localhost:5174/reset-password}
-    email-confirmation-redirect: ${EMAIL_CONFIRMATION_REDIRECT:http://localhost:5174/login}
+    publishable-key: ${SUPABASE_PUBLISHABLE_KEY:}
+    password-reset-redirect: ${PASSWORD_RESET_REDIRECT}
+    email-confirmation-redirect: ${EMAIL_CONFIRMATION_REDIRECT}
 management:
   endpoints:
     web:

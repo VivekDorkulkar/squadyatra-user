@@ -40,18 +40,18 @@ Controllers and the scheduler depend on service interfaces. Business logic and t
 
 ## Local Development
 
-Requirements: JDK 21 or newer, internet access for the Maven wrapper, Docker for local MySQL, and an isolated Supabase development project. No credentials are needed to run the automated tests.
+Requirements: JDK 21 or newer, internet access for Maven, Docker for local PostgreSQL, and an isolated Supabase development project. No external credentials are needed to run the automated tests.
 
 ```powershell
 $env:JAVA_HOME = 'C:\path\to\jdk-21'
 .\mvnw.cmd clean verify
 ```
 
-On Linux/macOS use `sh ./mvnw clean verify`. Tests default to H2 in MySQL compatibility mode. H2 does not replace MySQL concurrency verification.
+On Linux/macOS use `sh ./mvnw clean verify`. Tests default to H2 in PostgreSQL compatibility mode. H2 does not replace PostgreSQL concurrency verification.
 
-Set the variables described in `.env.example` in your shell or deployment environment. Docker Compose reads `.env`, but Spring Boot does **not** automatically import it. Never commit actual secrets. Then:
+Copy `.env.example` to `.env`, fill in the local values, and keep `.env` uncommitted. Spring Boot imports that properties file; Docker Compose also reads it. In hosted environments, set the same variables through the platform's secret/configuration settings.
 
-The bundled MySQL container publishes on `localhost:3307` to avoid colliding with an installed local MySQL server. Its `.env` should set `DATABASE_URL=jdbc:mysql://localhost:3307/squadyatra`; the application default uses `localhost:3306` for a MySQL server installed directly on the host.
+The bundled PostgreSQL 18 container publishes on `localhost:5433`. Set `DATABASE_URL=jdbc:postgresql://localhost:5433/squadyatra` in `.env` when using Compose. For Layerbase, use its pooled PostgreSQL endpoint with `sslmode=require` and supply the rotated password through the ignored `.env`; do not commit it.
 
 ```powershell
 docker compose up -d
@@ -71,18 +71,18 @@ Health: `http://localhost:8081/actuator/health`. Readiness: `/actuator/health/re
 | Variable | Purpose |
 | --- | --- |
 | `PORT` | HTTP port; defaults to 8081, supports Render's assigned port |
-| `DATABASE_URL` | JDBC MySQL URL; use the provider's TLS parameters in hosted environments |
+| `DATABASE_URL` | JDBC PostgreSQL URL; use the provider's TLS parameters in hosted environments |
 | `DATABASE_USERNAME`, `DATABASE_PASSWORD` | Dedicated database role and secret |
 | `DATABASE_POOL_SIZE` | Maximum JDBC connections; defaults to 5 |
 | `SUPABASE_URL` | Required Supabase project URL used for Auth API calls |
 | `SUPABASE_PUBLISHABLE_KEY` | Required for public Auth signup and email/password login; use the project's publishable/anon key, not its service-role key |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only legacy service-role JWT for Auth admin sync, recovery, and password updates |
-| `PASSWORD_RESET_REDIRECT` | Fixed frontend recovery URL (local default: `http://localhost:5174/reset-password`); allowlist it in Supabase Auth |
-| `EMAIL_CONFIRMATION_REDIRECT` | Fixed frontend login URL used by signup confirmation emails; allowlist it in Supabase Auth |
+| `PASSWORD_RESET_REDIRECT` | Fixed frontend recovery URL from `.env`; allowlist it in Supabase Auth |
+| `EMAIL_CONFIRMATION_REDIRECT` | Fixed frontend login URL from `.env` used by signup confirmation emails; allowlist it in Supabase Auth |
 
 Use HTTPS outside isolated local development. Keep service-role credentials out of frontend/Vercel public configuration. This client expects the legacy service-role JWT accepted as a bearer token; do not substitute an opaque publishable/secret key without adapting and verifying the provider's current admin-auth contract.
 
-The service owns its tables in the configured MySQL database (default `squadyatra`). MySQL databases serve as schemas, so Flyway and Hibernate use the selected database directly. Provision a restricted database role for local use. In production, use separate Flyway migration credentials through `SPRING_FLYWAY_USER` / `SPRING_FLYWAY_PASSWORD` and grant the runtime role only required DML. Do not expose these tables through Supabase's browser-facing Data API. No cross-service foreign keys or auth-schema migrations are used.
+The service owns its tables in the configured PostgreSQL database (`squadyatra`). Flyway and Hibernate use the selected database directly. Provision a restricted database role. In production, use separate Flyway migration credentials through `SPRING_FLYWAY_USER` / `SPRING_FLYWAY_PASSWORD` and grant the runtime role only required DML. Do not expose these tables through Supabase's browser-facing Data API. No cross-service foreign keys or auth-schema migrations are used.
 
 ## API
 
@@ -141,25 +141,25 @@ The new-user screen calls `POST /api/users` **without** an Authorization header:
 
 If Supabase CAPTCHA protection is enabled, also supply `captchaToken` from the frontend CAPTCHA challenge. Do not send `userType`, roles, permissions, or a Supabase UUID; registration always creates a consumer.
 
-1. Validate the request and check the normalized email in MySQL. If a local record already exists, return 409 without contacting Supabase.
+1. Validate the request and check the normalized email in PostgreSQL. If a local record already exists, return 409 without contacting Supabase.
 2. Outside the database transaction, call Supabase `/auth/v1/signup` with the email/password, `full_name` / `phone_number` metadata, and the fixed `EMAIL_CONFIRMATION_REDIRECT` URL. Supabase redirects confirmation links to the frontend login page; add that exact URL to Supabase Auth's redirect allowlist. Supabase rejects an existing identity; an obfuscated response with no identities is never mapped. Signup does not require or inspect session tokens. The contact phone is not treated as a verified Supabase phone/SMS identity.
-3. Only after Supabase confirms a new identity, save the completed, active MySQL account with its own UUID and the returned Supabase UUID, audit the change, and queue trusted role synchronization. A second MySQL duplicate check and the unique email constraint protect concurrent requests.
+3. Only after Supabase confirms a new identity, save the completed, active PostgreSQL account with its own UUID and the returned Supabase UUID, audit the change, and queue trusted role synchronization. A second PostgreSQL duplicate check and the unique email constraint protect concurrent requests.
 4. Return 201 with `id`, `supabaseUserId`, and a message. No password, session, refresh token, or access token is returned. Email confirmation is required before login.
-5. After Supabase confirms the email, the frontend calls `POST /api/users/login` through the gateway. The user service validates the password with Supabase and issues tokens only when the returned Supabase identity matches a completed, active MySQL account. The browser stores the tokens with Supabase `setSession`, verifies the persisted session, and loads `GET /api/users/me` through the gateway before granting access.
+5. After Supabase confirms the email, the frontend calls `POST /api/users/login` through the gateway. The user service validates the password with Supabase and issues tokens only when the returned Supabase identity matches a completed, active PostgreSQL account. The browser stores the tokens with Supabase `setSession`, verifies the persisted session, and loads `GET /api/users/me` through the gateway before granting access.
 
 The database has no password or password-hash column. Request DTO diagnostic strings redact credentials and JSON serialization excludes password/CAPTCHA values. Require HTTPS, disable request-body logging in every proxy/APM layer, and configure Supabase Site URL, email templates, password policy, delivery, and signup CAPTCHA before launch.
 
-Database and provider changes are not one distributed transaction. If Supabase creates an identity but the subsequent MySQL transaction fails, the provider identity may require operator reconciliation; a later signup will be rejected by Supabase rather than mapped automatically. Existing MySQL records, including incomplete or failed registrations, are always rejected as duplicates. Never accept a caller-supplied UUID or automatically attach an existing provider account just because emails match.
+Database and provider changes are not one distributed transaction. If Supabase creates an identity but the subsequent PostgreSQL transaction fails, the provider identity may require operator reconciliation; a later signup will be rejected by Supabase rather than mapped automatically. Existing PostgreSQL records are always rejected as duplicates. Never accept a caller-supplied UUID or automatically attach an existing provider account just because emails match.
 
-Monitor registration audit events and reconcile provider identities created without a corresponding MySQL record using an authorized operator workflow. Registration is bounded to ten requests per TCP peer per fifteen minutes in this process, with distributed gateway/WAF limits still required.
+Monitor registration audit events and reconcile provider identities created without a corresponding PostgreSQL record using an authorized operator workflow. Registration is bounded to ten requests per TCP peer per fifteen minutes in this process, with distributed gateway/WAF limits still required.
 
 Flyway V2 adds the unique nullable mapping and registration state, and backfills existing accounts with `supabase_user_id=id` and `COMPLETED`. Existing local primary keys and cross-service references are not rewritten. Apply migrations before deploying the new service version.
 
 ## Frontend and Gateway Integration
 
-1. The signup screen calls the public backend registration endpoint described above. Do not call Supabase signup separately: the backend checks MySQL first, then creates the Supabase identity, and saves the MySQL record only after Supabase reports a new identity.
+1. The signup screen calls the public backend registration endpoint described above. Do not call Supabase signup separately: the backend checks PostgreSQL first, then creates the Supabase identity, and saves the PostgreSQL record only after Supabase reports a new identity.
 2. Configure a **server-managed** Supabase custom access-token hook or trusted app metadata to supply `permissions: ["users:read", "users:write"]` to eligible users before protected profile requests. Do not source permissions from `user_metadata`, and do not grant admin by default. Signup itself needs no permissions or JWT.
-3. Supabase email confirmation is required before sign-in. `POST /api/users/login` validates the credentials and requires a matching active MySQL account; then the frontend persists and verifies the Supabase session and loads `GET /api/users/me` through the gateway. Do not call registration again as a profile-bootstrap step after login.
+3. Supabase email confirmation is required before sign-in. `POST /api/users/login` validates the credentials and requires a matching active PostgreSQL account; then the frontend persists and verifies the Supabase session and loads `GET /api/users/me` through the gateway. Do not call registration again as a profile-bootstrap step after login.
 4. Keep `USERS_SERVICE_URL=http://localhost:8081` in the gateway locally; configure its private deployed URL on Render. The existing StripPrefix rule already matches this service.
 5. Keep the **specific auth routes before generic users rules** in gateway configuration. Registration, login, and recovery initiation are public; password-reset completion requires authentication without an extra permission:
 
@@ -225,4 +225,4 @@ Local authorization rejects inactive users and uses current database roles immed
 
 Build with `docker build -t squadyatra-user .` and deploy the Dockerfile to Render as a private service when available. Set all runtime environment variables, configure `/actuator/health` as the health check, restrict direct access, enforce HTTPS at the edge, and configure backups and restore drills. Size connection pools across all services. No CORS policy is enabled in this backend: browsers should use the gateway.
 
-`clean verify` runs unit, migrated-database HTTP/security, and local mock-provider contract tests and creates the executable JAR. Tests verify a committed local row exists before the signup HTTP call and check UUID mapping and failure states. To use a disposable MySQL test database, set `TEST_DATABASE_URL`, `TEST_DATABASE_USERNAME`, and `TEST_DATABASE_PASSWORD`; tests run migrations, registration tests commit data and explicitly clean it up, and other tests roll back, so never point them at production. Live Supabase signup/confirmation, recovery delivery, signing-key rotation, cross-service revocation, and deployment networking still need staging verification. Identity document storage, discovery profiles, age verification, deletion/retention policy, notification event delivery, and agency approval remain with their owning workflows rather than being fabricated here.
+`clean verify` runs unit, migrated-database HTTP/security, and local mock-provider contract tests and creates the executable JAR. Tests verify a committed local row exists before the signup HTTP call and check UUID mapping and failure states. CI uses a disposable PostgreSQL 18 database through `TEST_DATABASE_URL`, `TEST_DATABASE_USERNAME`, and `TEST_DATABASE_PASSWORD`; never point tests at production. Live Supabase signup/confirmation, recovery delivery, signing-key rotation, cross-service revocation, and deployment networking still need staging verification. Identity document storage, discovery profiles, age verification, deletion/retention policy, notification event delivery, and agency approval remain with their owning workflows rather than being fabricated here.

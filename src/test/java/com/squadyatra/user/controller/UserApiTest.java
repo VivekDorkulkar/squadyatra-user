@@ -108,7 +108,7 @@ class UserApiTest {
     }
 
     @Test
-    void loginRejectsMissingOrUnmappedMysqlAccount() throws Exception {
+        void loginRejectsMissingOrUnmappedDatabaseAccount() throws Exception {
         when(provider.signIn("traveler@example.com", "correct-password"))
                 .thenReturn(new SupabaseSession(new LoginResult("access-token", "refresh-token"), id,
                         "traveler@example.com", true));
@@ -118,7 +118,7 @@ class UserApiTest {
     }
 
     @Test
-    void loginRejectsInactiveMysqlAccount() throws Exception {
+        void loginRejectsInactiveDatabaseAccount() throws Exception {
         UserAccount account = users.saveAndFlush(new UserAccount(id, "traveler@example.com", "Traveler"));
         account.setStatus(AccountStatus.INACTIVE);
         when(provider.signIn("traveler@example.com", "correct-password"))
@@ -139,7 +139,7 @@ class UserApiTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-        void publicRegistrationChecksSupabaseBeforeSavingCompletedMysqlRecord() throws Exception {
+        void publicRegistrationChecksSupabaseBeforeSavingCompletedDatabaseRecord() throws Exception {
         registrationEmail = id + "@signup.example.com";
         UUID supabaseId = UUID.randomUUID();
         when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any())).thenAnswer(call -> {
@@ -165,7 +165,7 @@ class UserApiTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void supabaseDuplicateDoesNotCreateMysqlRecord() throws Exception {
+        void supabaseDuplicateDoesNotCreateDatabaseRecord() throws Exception {
         registrationEmail = id + "@signup.example.com";
         when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new DuplicateUserException());
@@ -177,7 +177,7 @@ class UserApiTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void existingMysqlEmailIsRejectedBeforeCallingSupabase() throws Exception {
+        void existingDatabaseEmailIsRejectedBeforeCallingSupabase() throws Exception {
         registrationEmail = id + "@signup.example.com";
         UserAccount existing = users.saveAndFlush(new UserAccount(id, registrationEmail, "Existing traveler"));
         mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON)
@@ -190,7 +190,7 @@ class UserApiTest {
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-        void uncertainProviderFailureDoesNotCreateMysqlRecord() throws Exception {
+        void uncertainProviderFailureDoesNotCreateDatabaseRecord() throws Exception {
         registrationEmail = id + "@signup.example.com";
         when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new IdentityProviderException());

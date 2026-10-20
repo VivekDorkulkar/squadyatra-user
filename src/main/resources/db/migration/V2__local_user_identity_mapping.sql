@@ -1,4 +1,4 @@
-ALTER TABLE users ADD COLUMN supabase_user_id BINARY(16);
+ALTER TABLE users ADD COLUMN supabase_user_id UUID;
 ALTER TABLE users ADD COLUMN registration_status VARCHAR(20) NOT NULL DEFAULT 'COMPLETED';
 UPDATE users SET supabase_user_id = id;
 ALTER TABLE users ADD CONSTRAINT uq_users_supabase_user_id UNIQUE (supabase_user_id);
