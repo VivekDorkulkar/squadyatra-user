@@ -5,8 +5,6 @@ server:
     include-message: never
     include-stacktrace: never
 spring:
-  config:
-    import: optional:file:.env[.properties]
   application:
     name: squadyatra-user
   datasource:
