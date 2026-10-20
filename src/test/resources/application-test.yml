@@ -1,8 +1,10 @@
 spring:
   datasource:
-    url: ${TEST_DATABASE_URL:jdbc:h2:mem:users;MODE=PostgreSQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE}
+    url: ${TEST_DATABASE_URL:jdbc:h2:mem:users;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=TRUE}
     username: ${TEST_DATABASE_USERNAME:sa}
     password: ${TEST_DATABASE_PASSWORD:}
+  jpa:
+    database-platform: org.hibernate.dialect.MySQLDialect
 supabase:
   auth:
     url: https://test.supabase.co

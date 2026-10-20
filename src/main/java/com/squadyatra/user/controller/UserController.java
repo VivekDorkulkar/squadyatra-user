@@ -5,8 +5,11 @@ import java.util.UUID;
 
 import com.squadyatra.user.dto.Accepted;
 import com.squadyatra.user.dto.Deactivation;
+import com.squadyatra.user.dto.LoginRequest;
+import com.squadyatra.user.dto.LoginResult;
 import com.squadyatra.user.dto.PageView;
 import com.squadyatra.user.dto.PasswordReset;
+import com.squadyatra.user.dto.PasswordUpdate;
 import com.squadyatra.user.dto.ProfileUpdate;
 import com.squadyatra.user.dto.Registration;
 import com.squadyatra.user.dto.RegistrationResult;
@@ -19,6 +22,7 @@ import com.squadyatra.user.enums.UserType;
 import com.squadyatra.user.service.PasswordResetService;
 import com.squadyatra.user.service.RegistrationService;
 import com.squadyatra.user.service.UserService;
+import com.squadyatra.user.service.UserAuthService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -35,16 +39,19 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
-@RequestMapping("/users")
+@RequestMapping("/api/users")
 public class UserController {
     private final UserService users;
     private final PasswordResetService passwords;
     private final RegistrationService registrations;
+    private final UserAuthService authentication;
 
-    public UserController(UserService users, PasswordResetService passwords, RegistrationService registrations) {
+    public UserController(UserService users, PasswordResetService passwords, RegistrationService registrations,
+                          UserAuthService authentication) {
         this.users = users;
         this.passwords = passwords;
         this.registrations = registrations;
+        this.authentication = authentication;
     }
 
     @PostMapping
@@ -52,6 +59,16 @@ public class UserController {
                                                       HttpServletRequest servletRequest) {
         RegistrationResult result = registrations.register(request, servletRequest.getRemoteAddr());
         return ResponseEntity.created(URI.create("/api/users/" + result.id())).body(result);
+    }
+
+    @PostMapping("/login")
+    public LoginResult login(@Valid @RequestBody LoginRequest request, HttpServletRequest servletRequest) {
+        return authentication.signIn(request, servletRequest.getRemoteAddr());
+    }
+
+    @GetMapping("/oauth")
+    public ResponseEntity<Void> oauth(@RequestParam("url") URI authorizationUrl) {
+        return ResponseEntity.status(HttpStatus.FOUND).location(authentication.oauthRedirect(authorizationUrl)).build();
     }
 
     @GetMapping("/me")
@@ -106,5 +123,11 @@ public class UserController {
     public Accepted reset(@Valid @RequestBody PasswordReset request, HttpServletRequest servletRequest) {
         passwords.request(request.email(), servletRequest.getRemoteAddr());
         return new Accepted("If the account is eligible, password recovery instructions will be sent");
+    }
+
+    @PutMapping("/password-reset")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void updatePassword(@RequestHeader("X-User-Id") UUID userId, @Valid @RequestBody PasswordUpdate request) {
+        authentication.updatePassword(userId, request.password());
     }
 }

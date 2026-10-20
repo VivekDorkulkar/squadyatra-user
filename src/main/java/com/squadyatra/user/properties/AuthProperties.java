@@ -5,7 +5,8 @@ import java.net.URI;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties("supabase.auth")
-public record AuthProperties(URI url, String serviceRoleKey, URI passwordResetRedirect, String publishableKey) {
+public record AuthProperties(URI url, String serviceRoleKey, URI passwordResetRedirect, String publishableKey,
+                             URI emailConfirmationRedirect) {
     public String issuer() {
         if (url == null || !url.isAbsolute() || url.getHost() == null
                 || !("https".equals(url.getScheme()) || "http".equals(url.getScheme()))) {

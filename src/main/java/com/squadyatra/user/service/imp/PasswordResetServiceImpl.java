@@ -45,12 +45,14 @@ public class PasswordResetServiceImpl implements PasswordResetService {
         Window window = windows.get(key);
         if (window == null) {
             if (windows.size() >= 10000) {
-                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Try again later");
+                throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                        "Too many password reset requests. Please wait 15 minutes before trying again.");
             }
             window = new Window(0, now.plus(Duration.ofMinutes(15)));
         }
         if (window.count() >= maximum) {
-            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS, "Try again later");
+            throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+                    "Too many password reset requests. Please wait 15 minutes before trying again.");
         }
         windows.put(key, new Window(window.count() + 1, window.expiresAt()));
     }

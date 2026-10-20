@@ -18,6 +18,8 @@ public interface UserRepository extends JpaRepository<UserAccount, UUID> {
 
     Optional<UserAccount> findByEmail(String email);
 
+    Optional<UserAccount> findByEmailIgnoreCase(String email);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select account from UserAccount account where account.email = :email")
     Optional<UserAccount> findForUpdateByEmail(String email);

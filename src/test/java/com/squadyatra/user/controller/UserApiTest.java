@@ -1,15 +1,19 @@
 package com.squadyatra.user.controller;
 
 import java.util.Map;
+import java.util.Locale;
 import java.util.UUID;
 
 import com.squadyatra.user.client.SupabaseClient;
+import com.squadyatra.user.client.SupabaseSession;
 import com.squadyatra.user.dto.ProfileUpdate;
 import com.squadyatra.user.dto.Registration;
+import com.squadyatra.user.dto.LoginResult;
 import com.squadyatra.user.entities.UserAccount;
 import com.squadyatra.user.enums.AccountStatus;
 import com.squadyatra.user.enums.RegistrationStatus;
 import com.squadyatra.user.enums.UserType;
+import com.squadyatra.user.exceptions.DuplicateUserException;
 import com.squadyatra.user.exceptions.IdentityProviderException;
 import com.squadyatra.user.exceptions.RegistrationRejectedException;
 import com.squadyatra.user.repository.AuditRepository;
@@ -61,7 +65,7 @@ class UserApiTest {
         @AfterEach
         void cleanupRegistration() {
                 if (registrationEmail != null) {
-                        users.findByEmail(registrationEmail).ifPresent(account -> {
+                        users.findByEmailIgnoreCase(registrationEmail).ifPresent(account -> {
                                 sync.deleteById(account.getId());
                                 audit.deleteAll(audit.findAll().stream().filter(entry -> entry.getUserId().equals(account.getId())).toList());
                                 users.delete(account);
@@ -71,27 +75,79 @@ class UserApiTest {
 
     @Test
         void gatewayIdentityIsRequiredAndBearerTokensAreNotValidatedHere() throws Exception {
-                mvc.perform(get("/users/me").header("Authorization", "Bearer forged")).andExpect(status().isBadRequest());
+                mvc.perform(get("/api/users/me").header("Authorization", "Bearer forged")).andExpect(status().isBadRequest());
                 create(id);
-                mvc.perform(get("/users/me").header("X-User-Id", id.toString()).header("Authorization", "Bearer forged"))
+                mvc.perform(get("/api/users/me").header("X-User-Id", id.toString()).header("Authorization", "Bearer forged"))
                                 .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(id.toString()));
     }
 
     @Test
+    void loginReturnsTokensFromIdentityProvider() throws Exception {
+        UUID supabaseId = UUID.randomUUID();
+        users.saveAndFlush(new UserAccount(id, "traveler@example.com", "Traveler"));
+        when(provider.signIn("traveler@example.com", "correct-password"))
+                .thenReturn(new SupabaseSession(new LoginResult("access-token", "refresh-token"), supabaseId,
+                        "traveler@example.com", true));
+        users.findById(id).orElseThrow().completeRegistration(supabaseId);
+        users.flush();
+        mvc.perform(post("/api/users/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"traveler@example.com\",\"password\":\"correct-password\"}"))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.accessToken").value("access-token"))
+                .andExpect(jsonPath("$.refreshToken").value("refresh-token"));
+        verify(provider).signIn("traveler@example.com", "correct-password");
+    }
+
+    @Test
+    void loginRejectsUnverifiedSupabaseEmail() throws Exception {
+        when(provider.signIn("traveler@example.com", "correct-password"))
+                .thenReturn(new SupabaseSession(new LoginResult("access-token", "refresh-token"), id,
+                        "traveler@example.com", false));
+        mvc.perform(post("/api/users/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"traveler@example.com\",\"password\":\"correct-password\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void loginRejectsMissingOrUnmappedMysqlAccount() throws Exception {
+        when(provider.signIn("traveler@example.com", "correct-password"))
+                .thenReturn(new SupabaseSession(new LoginResult("access-token", "refresh-token"), id,
+                        "traveler@example.com", true));
+        mvc.perform(post("/api/users/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"traveler@example.com\",\"password\":\"correct-password\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void loginRejectsInactiveMysqlAccount() throws Exception {
+        UserAccount account = users.saveAndFlush(new UserAccount(id, "traveler@example.com", "Traveler"));
+        account.setStatus(AccountStatus.INACTIVE);
+        when(provider.signIn("traveler@example.com", "correct-password"))
+                .thenReturn(new SupabaseSession(new LoginResult("access-token", "refresh-token"), id,
+                        "traveler@example.com", true));
+        mvc.perform(post("/api/users/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"email\":\"traveler@example.com\",\"password\":\"correct-password\"}"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void passwordResetCompletionUsesGatewayIdentity() throws Exception {
+        mvc.perform(put("/api/users/password-reset").header("X-User-Id", id.toString())
+                .contentType(MediaType.APPLICATION_JSON).content("{\"password\":\"a-new-strong-password\"}"))
+                .andExpect(status().isNoContent());
+        verify(provider).updatePassword(id, "a-new-strong-password");
+    }
+
+    @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void publicRegistrationCommitsLocalRowBeforeCallingSupabaseThenMapsItsUuid() throws Exception {
+        void publicRegistrationChecksSupabaseBeforeSavingCompletedMysqlRecord() throws Exception {
         registrationEmail = id + "@signup.example.com";
         UUID supabaseId = UUID.randomUUID();
         when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any())).thenAnswer(call -> {
             assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
-            UserAccount pending = users.findByEmail(registrationEmail).orElseThrow();
-            assertThat(pending.getSupabaseUserId()).isNull();
-            assertThat(pending.getRegistrationStatus()).isEqualTo(RegistrationStatus.PENDING);
-            assertThat(pending.getStatus()).isEqualTo(AccountStatus.INACTIVE);
-            assertThat(pending.getPhone()).isEqualTo("+919876543210");
+                        assertThat(users.findByEmail(registrationEmail)).isEmpty();
             return supabaseId;
         });
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.supabaseUserId").value(supabaseId.toString()))
                 .andExpect(jsonPath("$.password").doesNotExist()).andExpect(jsonPath("$.accessToken").doesNotExist());
         UserAccount created = users.findByEmail(registrationEmail).orElseThrow();
@@ -101,54 +157,46 @@ class UserApiTest {
         assertThat(created.getUserType()).isEqualTo(UserType.CONSUMER);
         assertThat(created.getStatus()).isEqualTo(AccountStatus.ACTIVE);
         assertThat(sync.existsById(created.getId())).isTrue();
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
-                .andExpect(status().isConflict());
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("An account with this email already exists. Please sign in."));
         verify(provider, times(1)).signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any());
     }
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void rejectedSignupRetainsFailedInactiveLocalRecord() throws Exception {
+    void supabaseDuplicateDoesNotCreateMysqlRecord() throws Exception {
         registrationEmail = id + "@signup.example.com";
         when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any()))
-                .thenThrow(new RegistrationRejectedException());
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
-                .andExpect(status().isConflict());
-        UserAccount failed = users.findByEmail(registrationEmail).orElseThrow();
-        assertThat(failed.getRegistrationStatus()).isEqualTo(RegistrationStatus.FAILED);
-        assertThat(failed.getStatus()).isEqualTo(AccountStatus.INACTIVE);
-        assertThat(failed.getSupabaseUserId()).isNull();
-        assertThat(sync.existsById(failed.getId())).isFalse();
+                .thenThrow(new DuplicateUserException());
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("An account with this email already exists. Please sign in."));
+        assertThat(users.findByEmail(registrationEmail)).isEmpty();
     }
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void explicitlyRejectedRegistrationCanBeRetriedWithoutCreatingAnotherLocalUser() throws Exception {
+    void existingMysqlEmailIsRejectedBeforeCallingSupabase() throws Exception {
         registrationEmail = id + "@signup.example.com";
-        UUID supabaseId = UUID.randomUUID();
-        when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any()))
-                .thenThrow(new RegistrationRejectedException()).thenReturn(supabaseId);
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
-                .andExpect(status().isConflict());
-        UUID localId = users.findByEmail(registrationEmail).orElseThrow().getId();
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
-                .andExpect(status().isCreated()).andExpect(jsonPath("$.id").value(localId.toString()));
-        assertThat(users.findByEmail(registrationEmail).orElseThrow().getSupabaseUserId()).isEqualTo(supabaseId);
+        UserAccount existing = users.saveAndFlush(new UserAccount(id, registrationEmail, "Existing traveler"));
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON)
+                .content(registrationJson(registrationEmail.toUpperCase(Locale.ROOT))))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.detail").value("An account with this email already exists. Please sign in."));
+        assertThat(users.findByEmail(registrationEmail).orElseThrow().getId()).isEqualTo(existing.getId());
+        verifyNoInteractions(provider);
     }
 
     @Test
     @Transactional(propagation = Propagation.NOT_SUPPORTED)
-    void uncertainProviderFailureLeavesPendingRecordForReconciliationWithoutUnsafeRetry() throws Exception {
+        void uncertainProviderFailureDoesNotCreateMysqlRecord() throws Exception {
         registrationEmail = id + "@signup.example.com";
         when(provider.signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any()))
                 .thenThrow(new IdentityProviderException());
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
                 .andExpect(status().isServiceUnavailable());
-        UserAccount pending = users.findByEmail(registrationEmail).orElseThrow();
-        assertThat(pending.getRegistrationStatus()).isEqualTo(RegistrationStatus.PENDING);
-        assertThat(pending.getSupabaseUserId()).isNull();
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON).content(registrationJson(registrationEmail)))
-                .andExpect(status().isConflict());
+        assertThat(users.findByEmail(registrationEmail)).isEmpty();
         verify(provider, times(1)).signUp(eq(registrationEmail), anyString(), anyString(), anyString(), any());
     }
 
@@ -158,7 +206,7 @@ class UserApiTest {
         UserAccount account = UserAccount.pending(id, id + "@example.com", "Traveler", "+919876543210");
         account.completeRegistration(supabaseId);
         users.saveAndFlush(account);
-        mvc.perform(get("/users/me").header("X-User-Id", supabaseId.toString()))
+        mvc.perform(get("/api/users/me").header("X-User-Id", supabaseId.toString()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.id").value(id.toString()))
                 .andExpect(jsonPath("$.supabaseUserId").value(supabaseId.toString()))
                 .andExpect(jsonPath("$.phone").value("+919876543210"));
@@ -174,7 +222,7 @@ class UserApiTest {
 
     @Test
     void registrationRequiresValidPhoneEmailAndPasswordWithoutCallingProvider() throws Exception {
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"fullName\":\"Traveler\",\"email\":\"invalid\",\"phoneNumber\":\"123\",\"password\":\"short\"}"))
                 .andExpect(status().isBadRequest());
         verifyNoInteractions(provider);
@@ -182,12 +230,12 @@ class UserApiTest {
 
     @Test
     void invalidInputAndPaginationAreRejected() throws Exception {
-        mvc.perform(post("/users").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/users").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"fullName\":\" \"}")).andExpect(status().isBadRequest());
         UserAccount admin = create(id);
         admin.setUserType(UserType.ADMIN);
         users.flush();
-        mvc.perform(get("/users?size=101").header("X-User-Id", id.toString())).andExpect(status().isBadRequest());
+        mvc.perform(get("/api/users?size=101").header("X-User-Id", id.toString())).andExpect(status().isBadRequest());
     }
 
     @Test
@@ -195,11 +243,11 @@ class UserApiTest {
         create(id);
         var update = new ProfileUpdate("Updated traveler", "+919876543210", null,
                 "Pune", "IN", "Asia/Kolkata", "en-IN", "Enjoys hiking", true, true, 0);
-        mvc.perform(put("/users/me").header("X-User-Id", id.toString()).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/users/me").header("X-User-Id", id.toString()).contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsString(update)))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.version").value(1))
                 .andExpect(jsonPath("$.marketingConsentUpdatedAt").isNotEmpty());
-        mvc.perform(put("/users/me").header("X-User-Id", id.toString()).contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(put("/api/users/me").header("X-User-Id", id.toString()).contentType(MediaType.APPLICATION_JSON)
                 .content(json.writeValueAsString(update))).andExpect(status().isConflict());
     }
 
@@ -207,11 +255,11 @@ class UserApiTest {
         void deactivatedAccountCannotUseExistingGatewayIdentity() throws Exception {
         create(id);
                 String userId = id.toString();
-                mvc.perform(post("/users/me/deactivate").header("X-User-Id", userId)
+                mvc.perform(post("/api/users/me/deactivate").header("X-User-Id", userId)
                 .contentType(MediaType.APPLICATION_JSON).content("{\"reason\":\"Taking a break\",\"version\":0}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("inactive"));
-                mvc.perform(get("/users/me").header("X-User-Id", userId)).andExpect(status().isForbidden());
-                mvc.perform(get("/users/" + id).header("X-User-Id", userId)).andExpect(status().isForbidden());
+                mvc.perform(get("/api/users/me").header("X-User-Id", userId)).andExpect(status().isForbidden());
+                mvc.perform(get("/api/users/" + id).header("X-User-Id", userId)).andExpect(status().isForbidden());
     }
 
     @Test
@@ -219,23 +267,23 @@ class UserApiTest {
         create(id);
         UUID other = UUID.randomUUID();
         create(other);
-        mvc.perform(get("/users/" + other).header("X-User-Id", id.toString())).andExpect(status().isForbidden());
-        mvc.perform(put("/users/" + other + "/type").header("X-User-Id", id.toString())
+        mvc.perform(get("/api/users/" + other).header("X-User-Id", id.toString())).andExpect(status().isForbidden());
+        mvc.perform(put("/api/users/" + other + "/type").header("X-User-Id", id.toString())
                 .contentType(MediaType.APPLICATION_JSON).content("{\"userType\":\"admin\",\"reason\":\"Escalate\",\"version\":0}"))
                 .andExpect(status().isForbidden());
         users.findById(id).orElseThrow().setUserType(UserType.ADMIN);
         users.flush();
-        mvc.perform(put("/users/" + other + "/type").header("X-User-Id", id.toString())
+        mvc.perform(put("/api/users/" + other + "/type").header("X-User-Id", id.toString())
                 .contentType(MediaType.APPLICATION_JSON).content("{\"userType\":\"agency\",\"reason\":\"Approved onboarding\",\"version\":0}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.userType").value("agency"));
-        mvc.perform(get("/users").header("X-User-Id", id.toString()))
+        mvc.perform(get("/api/users").header("X-User-Id", id.toString()))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.totalElements").value(2))
                 .andExpect(jsonPath("$.content[0].email").doesNotExist());
     }
 
     @Test
     void passwordRecoveryIsPublicAndDoesNotReturnAccountDetails() throws Exception {
-        mvc.perform(post("/users/password-reset").contentType(MediaType.APPLICATION_JSON)
+        mvc.perform(post("/api/users/password-reset").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"email\":\"Traveler@Example.com\"}"))
                 .andExpect(status().isAccepted()).andExpect(jsonPath("$.email").doesNotExist());
         verify(provider).recover("traveler@example.com");

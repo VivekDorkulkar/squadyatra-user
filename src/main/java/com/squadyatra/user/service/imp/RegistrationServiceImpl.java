@@ -12,7 +12,7 @@ import com.squadyatra.user.dto.RegistrationResult;
 import com.squadyatra.user.entities.AuditEntry;
 import com.squadyatra.user.entities.IdentitySync;
 import com.squadyatra.user.entities.UserAccount;
-import com.squadyatra.user.enums.RegistrationStatus;
+import com.squadyatra.user.exceptions.DuplicateUserException;
 import com.squadyatra.user.exceptions.RegistrationRejectedException;
 import com.squadyatra.user.repository.AuditRepository;
 import com.squadyatra.user.repository.IdentitySyncRepository;
@@ -52,42 +52,25 @@ public class RegistrationServiceImpl implements RegistrationService {
     public RegistrationResult register(Registration request, String remoteAddress) {
         limit(remoteAddress);
         String email = request.email().trim().toLowerCase(Locale.ROOT);
-        UUID localId = transaction.execute(status -> {
-            UserAccount account = users.findForUpdateByEmail(email).orElse(null);
-            if (account == null) {
-                account = UserAccount.pending(UUID.randomUUID(), email, request.fullName().trim(), request.phoneNumber());
-            } else if (account.getRegistrationStatus() == RegistrationStatus.FAILED) {
-                account.retryRegistration(request.fullName().trim(), request.phoneNumber());
-            } else {
-                throw new RegistrationRejectedException();
-            }
-            users.saveAndFlush(account);
-            record(account.getId(), "REGISTRATION_REQUESTED");
-            return account.getId();
-        });
-
-        UUID supabaseId;
-        try {
-            supabaseId = provider.signUp(email, request.password(), request.fullName().trim(),
-                    request.phoneNumber(), request.captchaToken());
-        } catch (RegistrationRejectedException exception) {
-            transaction.executeWithoutResult(status -> {
-                UserAccount account = users.findForUpdate(localId).orElseThrow();
-                account.failRegistration();
-                record(localId, "REGISTRATION_REJECTED");
-            });
-            throw exception;
+        if (users.findByEmailIgnoreCase(email).isPresent()) {
+            throw new DuplicateUserException();
         }
 
+        UUID supabaseId = provider.signUp(email, request.password(), request.fullName().trim(),
+                request.phoneNumber(), request.captchaToken());
+        UUID localId = UUID.randomUUID();
         transaction.executeWithoutResult(status -> {
-            UserAccount account = users.findForUpdate(localId).orElseThrow();
+            if (users.findByEmailIgnoreCase(email).isPresent()) {
+                throw new DuplicateUserException();
+            }
+            UserAccount account = UserAccount.pending(localId, email, request.fullName().trim(), request.phoneNumber());
             account.completeRegistration(supabaseId);
-            users.flush();
+            users.saveAndFlush(account);
             sync.save(new IdentitySync(localId));
             record(localId, "REGISTRATION_COMPLETED");
         });
         return new RegistrationResult(localId, supabaseId,
-                "Account created. Check your email if confirmation is required, then sign in");
+                "Account created. Check your email to confirm your account, then sign in");
     }
 
     private void record(UUID id, String action) {

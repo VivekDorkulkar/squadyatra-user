@@ -23,6 +23,8 @@ class PasswordResetServiceImplTest {
         }
         verify(provider, times(3)).recover("traveler@example.com");
         assertThatThrownBy(() -> service.request("TRAVELER@example.com", "127.0.0.2"))
-                .isInstanceOf(ResponseStatusException.class).hasMessageContaining("429");
+            .isInstanceOf(ResponseStatusException.class)
+            .hasMessageContaining("429")
+            .hasMessageContaining("wait 15 minutes");
     }
 }

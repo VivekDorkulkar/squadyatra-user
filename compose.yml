@@ -1,18 +1,17 @@
 services:
-  postgres:
-    image: postgres:17-alpine
+  mysql:
+    image: mysql:8.4
     environment:
-      POSTGRES_DB: squadyatra
-      POSTGRES_USER: ${DATABASE_USERNAME:-squadyatra_user}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
+      MYSQL_DATABASE: squadyatra
+      MYSQL_ROOT_PASSWORD: ${DATABASE_PASSWORD:?Set DATABASE_PASSWORD in .env}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:3307:3306"
     volumes:
-      - user_postgres:/var/lib/postgresql/data
+      - user_mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d squadyatra"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
       interval: 5s
       timeout: 3s
       retries: 10
 volumes:
-  user_postgres:
+  user_mysql:
