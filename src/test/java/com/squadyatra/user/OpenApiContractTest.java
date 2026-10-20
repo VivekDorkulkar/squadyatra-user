@@ -19,7 +19,7 @@ class OpenApiContractTest {
             assertThat(contract.get("openapi")).isEqualTo("3.0.3");
             Map<?, ?> paths = (Map<?, ?>) contract.get("paths");
             assertThat(paths.keySet().stream().map(Object::toString)).containsExactlyInAnyOrder(
-                    "/users", "/users/me", "/users/me/deactivate", "/users/{id}",
+                    "/users", "/users/login", "/users/oauth", "/users/me", "/users/me/deactivate", "/users/{id}",
                     "/users/{id}/status", "/users/{id}/type", "/users/{id}/identity-sync", "/users/password-reset");
                     Map<?, ?> registration = (Map<?, ?>) ((Map<?, ?>) paths.get("/users")).get("post");
                     assertThat((List<?>) registration.get("security")).isEmpty();
